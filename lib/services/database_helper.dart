@@ -13,7 +13,7 @@ class DatabaseHelper {
   // ดึง instance ของฐานข้อมูล (ถ้ายังไม่มีจะทำการเปิดหรือสร้างใหม่)
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('notes.db');
+    _database = await _initDB('notes_v2.db');
     return _database!;
   }
 
@@ -22,20 +22,20 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: _createDB,
-    );
+    return await openDatabase(path, version: 1, onCreate: _createDB);
   }
 
   // คำสั่ง SQL สร้างตารางเมื่อเปิดแอปครั้งแรก
   Future _createDB(Database db, int version) async {
+    // อัปเดตตารางให้รองรับฟิลด์ใหม่ทั้งหมด
     await db.execute('''
       CREATE TABLE notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
-        content TEXT NOT NULL
+        content TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        deadline TEXT,
+        tags TEXT NOT NULL
       )
     ''');
   }
@@ -48,10 +48,38 @@ class DatabaseHelper {
     return await db.insert('notes', note.toMap());
   }
 
-  // 2. Read (อ่านข้อมูลทั้งหมด)
+  // 2. Read All (อ่านข้อมูลทั้งหมด)
   Future<List<Note>> getAllNotes() async {
     final db = await instance.database;
-    final result = await db.query('notes', orderBy: 'id DESC'); // เรียงจากใหม่ไปเก่า
+    // เรียงจากเวลาที่สร้างล่าสุดไปเก่าสุด
+    final result = await db.query('notes', orderBy: 'createdAt DESC');
+
+    return result.map((map) => Note.fromMap(map)).toList();
+  }
+
+  // 2.1 Read Single (เปิดดูบันทึกรายอัน)
+  Future<Note?> getNoteById(int id) async {
+    final db = await instance.database;
+    final maps = await db.query('notes', where: 'id = ?', whereArgs: [id]);
+
+    if (maps.isNotEmpty) {
+      return Note.fromMap(maps.first);
+    } else {
+      return null; // คืนค่า null ถ้าไม่พบข้อมูล
+    }
+  }
+
+  // 2.2 Read by Tag (แสดงโน้ตที่มีป้ายกำกับนั้น)
+  Future<List<Note>> getNotesByTag(String tag) async {
+    final db = await instance.database;
+    // เนื่องจากเราเก็บ tags เป็น JSON String (เช่น '["work", "urgent"]')
+    // เราจึงใช้ LIKE ค้นหาคำนั้นๆ ใน String ได้เลย
+    final result = await db.query(
+      'notes',
+      where: 'tags LIKE ?',
+      whereArgs: ['%"$tag"%'],
+      orderBy: 'createdAt DESC',
+    );
 
     return result.map((map) => Note.fromMap(map)).toList();
   }
@@ -70,10 +98,6 @@ class DatabaseHelper {
   // 4. Delete (ลบข้อมูล)
   Future<int> deleteNote(int id) async {
     final db = await instance.database;
-    return await db.delete(
-      'notes',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
   }
 }
